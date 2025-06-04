@@ -215,7 +215,7 @@ class MouseThread:
     def get_shooting_key_state(self):
         for key_name in cfg.hotkey_targeting_list:
             key_code = Buttons.KEY_CODES.get(key_name.strip())
-            if key_code and (win32api.GetAsyncKeyState(key_code) & 0x8000) != 0:
+            if key_code and (win32api.GetKeyState(key_code) & 0x8000) != 0:
                 return True
         return False
 
