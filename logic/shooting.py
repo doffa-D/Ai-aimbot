@@ -1,7 +1,5 @@
 import queue
 import threading
-import os
-import win32con, win32api
 
 from logic.config_watcher import cfg
 from logic.logger import logger

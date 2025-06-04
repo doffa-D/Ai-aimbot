@@ -1,7 +1,6 @@
-import win32con, win32api
+import win32api
 import time
 import math
-import os
 import supervision as sv
 
 from logic.config_watcher import cfg
