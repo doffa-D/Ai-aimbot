@@ -57,17 +57,10 @@ def Warnings():
         logger.warning("A small value of `AI_conf ` can lead to a large number of false positives.")
     
     # Mouse
-    if cfg.mouse_ghub == False and cfg.arduino_move == False and cfg.arduino_shoot == False:
-        logger.warning("win32api is detected in some games.")
-    if cfg.mouse_ghub and cfg.arduino_move == False and cfg.arduino_shoot == False:
-        logger.warning("ghub is detected in some games.")
     if cfg.arduino_move == False:
-        logger.warning("Using standard libraries for mouse moving such as `win32` or `Ghub driver` without bypassing, for example, how Arduino can speed up the account blocking process, use it at your own risk.")
-    if cfg.arduino_shoot == False and cfg.auto_shoot:
-        logger.warning("Using standard libraries for mouse shooting such as `win32` or `Ghub driver` without bypassing, for example, how Arduino can speed up the account blocking process, use it at your own risk.")
-    selected_methods = sum([cfg.arduino_move, cfg.mouse_ghub, cfg.mouse_rzr])
-    if selected_methods > 1:
-        raise ValueError("WARNING: You use more than one mouse input method.")
+        raise ValueError("WARNING: You don't use any mouse moving method.")
+    if cfg.arduino_shoot == False and cfg.auto_shoot == True:
+        logger.warning("You don't use any mouse shooting method.")
     
     # Debug
     if cfg.show_window:

@@ -65,7 +65,6 @@ def init():
             if cfg.show_window or cfg.show_overlay:
                 visuals.queue.put(image)
                 
-            print(f"[Run DEBUG] Timestamp before perform_detection: {time.time():.4f}")
             result = perform_detection(model, image, tracker)
 
             if hotkeys_watcher.app_pause == 0:

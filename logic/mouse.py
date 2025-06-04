@@ -10,16 +10,12 @@ from logic.shooting import shooting
 from logic.buttons import Buttons
 from logic.logger import logger
 
-if cfg.mouse_rzr:
-    from logic.rzctl import RZCONTROL
-
 if cfg.arduino_move or cfg.arduino_shoot:
     from logic.arduino import arduino
 
 class MouseThread:
     def __init__(self):
         self.initialize_parameters()
-        self.setup_hardware()
 
     def initialize_parameters(self):
         self.dpi = cfg.mouse_dpi
@@ -53,19 +49,9 @@ class MouseThread:
             return 'cpu'
         return f'cuda:{cfg.AI_device}'
 
-    def setup_hardware(self):
-        if cfg.mouse_ghub:
-            from logic.ghub import gHub
-            self.ghub = gHub
 
-        if cfg.mouse_rzr:
-            dll_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "rzctl.dll")
-            self.rzr = RZCONTROL(dll_path)
-            if not self.rzr.init():
-                logger.error("Failed to initialize rzctl")
 
     def process_data(self, data):
-        print(f"[Mouse DEBUG {time.time():.4f}] process_data called with: {data}")
         if isinstance(data, sv.Detections):
             target_x, target_y = data.xyxy.mean(axis=1)
             target_w, target_h = data.xyxy[:, 2] - data.xyxy[:, 0], data.xyxy[:, 3] - data.xyxy[:, 1]
@@ -191,31 +177,21 @@ class MouseThread:
         return move_x, move_y
 
     def move_mouse(self, x, y):
-        print(f"[Mouse DEBUG {time.time():.4f}] move_mouse called. X={x}, Y={y}. Shooting key state: {self.get_shooting_key_state()}, AutoAim: {cfg.mouse_auto_aim}")
         if x == 0 and y == 0:
-            print(f"[Mouse DEBUG {time.time():.4f}] move_mouse returning early due to zero movement.")
             return
 
         shooting_state = self.get_shooting_key_state()
 
         if shooting_state or cfg.mouse_auto_aim:
-            print(f"[Mouse DEBUG {time.time():.4f}] Target active (shooting_state or auto_aim is True).")
-            if not cfg.mouse_ghub and not cfg.arduino_move and not cfg.mouse_rzr:
-                win32api.mouse_event(win32con.MOUSEEVENTF_MOVE, int(x), int(y), 0, 0)
-            elif cfg.mouse_ghub:
-                self.ghub.mouse_xy(int(x), int(y))
-            elif cfg.arduino_move:
-                print(f"[Mouse DEBUG {time.time():.4f}] arduino_move is True. Calling arduino.move({int(x)}, {int(y)})")
+            if cfg.arduino_move:
                 arduino.move(int(x), int(y))
-            elif cfg.mouse_rzr:
-                self.rzr.mouse_move(int(x), int(y), True)
         else:
-            print(f"[Mouse DEBUG {time.time():.4f}] Target NOT active (shooting_state and auto_aim are False).")
+            pass
 
     def get_shooting_key_state(self):
         for key_name in cfg.hotkey_targeting_list:
             key_code = Buttons.KEY_CODES.get(key_name.strip())
-            if key_code and (win32api.GetKeyState(key_code) & 0x8000) != 0:
+            if key_code and (win32api.GetKeyState(key_code) if cfg.mouse_lock_target else win32api.GetAsyncKeyState(key_code)) < 0:
                 return True
         return False
 
