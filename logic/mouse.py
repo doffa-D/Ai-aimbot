@@ -1,4 +1,3 @@
-import win32api
 import time
 import math
 import supervision as sv
@@ -40,6 +39,7 @@ class MouseThread:
         self.arch = self.get_arch()
         self.section_size_x = self.screen_width / 100
         self.section_size_y = self.screen_height / 100
+        self.smoothing_alpha = getattr(cfg, 'mouse_smoothing_alpha', 0.7)
 
     def get_arch(self):
         if cfg.AI_enable_AMD:
@@ -161,7 +161,7 @@ class MouseThread:
         mouse_move_y = offset_y * degrees_per_pixel_y
 
         # Apply smoothing
-        alpha = 0.85
+        alpha = self.smoothing_alpha
         if not hasattr(self, 'last_move_x'):
             self.last_move_x, self.last_move_y = 0, 0
         
@@ -179,20 +179,52 @@ class MouseThread:
         if x == 0 and y == 0:
             return
 
-        shooting_state = self.get_shooting_key_state()
+        primary_aim_active = self.get_shooting_key_state()
 
-        if shooting_state or cfg.mouse_auto_aim:
+        button_2_pressed = False
+        # Check Arduino button 2 state only if Arduino movement is configured,
+        # as arduino object might not be available otherwise and movement relies on it.
+        if cfg.arduino_move:
+            try:
+                # arduino.is_button_pressed(2) will check the state of button ID 2
+                button_2_pressed = arduino.is_button_pressed(2)
+            except NameError: # Should not happen if cfg.arduino_move is true due to conditional import
+                logger.error("[Mouse] Arduino object not available for button 2 check, though cfg.arduino_move is true. This is unexpected.")
+            except Exception as e:
+                logger.error(f"[Mouse] Error checking Arduino button 2 state: {e}")
+                # Keep button_2_pressed as False to prevent movement on error
+
+        # Move if primary aim is active, or auto-aim is on, or Arduino button 2 is pressed
+        should_move = primary_aim_active or cfg.mouse_auto_aim or button_2_pressed
+
+        if should_move:
             if cfg.arduino_move:
                 arduino.move(int(x), int(y))
+            # If cfg.arduino_move is False, no movement occurs via Arduino.
+            # If you had a non-Arduino way to move, it would go in an else here.
         else:
-            pass
+            pass # No conditions met for movement
 
     def get_shooting_key_state(self):
-        for key_name in cfg.hotkey_targeting_list:
-            key_code = Buttons.KEY_CODES.get(key_name.strip())
-            if key_code and (win32api.GetKeyState(key_code) if cfg.mouse_lock_target else win32api.GetAsyncKeyState(key_code)) < 0:
-                return True
-        return False
+        if cfg.arduino_shoot: # Arduino shooting is enabled
+            if hasattr(cfg, 'arduino_aim_button_id'):
+                try:
+                    aim_button_id = int(cfg.arduino_aim_button_id)
+                    return arduino.is_button_pressed(aim_button_id)
+                except ValueError:
+                    logger.error(f'[Mouse] cfg.arduino_aim_button_id ("{cfg.arduino_aim_button_id}") is not a valid integer. Arduino aiming will not occur.')
+                    return False
+                except Exception as e:
+                    logger.error(f'[Mouse] Error checking Arduino button state: {e}. Arduino aiming will not occur.')
+                    return False
+            else:
+                logger.warning('[Mouse] arduino_shoot is True, but cfg.arduino_aim_button_id is not defined. Arduino aiming will not occur.')
+                return False
+        else:
+            # arduino_shoot is False, and we are not using win32api for keyboard fallback.
+            # Therefore, shooting state will be false.
+            # logger.debug('[Mouse] arduino_shoot is False. No keyboard hotkey check implemented as per user request.') # Optional: for verbosity
+            return False
 
     def check_target_in_scope(self, target_x, target_y, target_w, target_h, reduction_factor):
         reduced_w, reduced_h = target_w * reduction_factor / 2, target_h * reduction_factor / 2
@@ -216,6 +248,7 @@ class MouseThread:
         self.screen_height = cfg.detection_window_height
         self.center_x = self.screen_width / 2
         self.center_y = self.screen_height / 2
+        self.smoothing_alpha = getattr(cfg, 'mouse_smoothing_alpha', 0.7)
 
     def visualize_target(self, target_x, target_y, target_cls):
         if (cfg.show_window and cfg.show_target_line) or (cfg.show_overlay and cfg.show_target_line):
