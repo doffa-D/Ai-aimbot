@@ -39,7 +39,6 @@ class MouseThread:
         self.arch = self.get_arch()
         self.section_size_x = self.screen_width / 100
         self.section_size_y = self.screen_height / 100
-        self.smoothing_alpha = getattr(cfg, 'mouse_smoothing_alpha', 0.7)
 
     def get_arch(self):
         if cfg.AI_enable_AMD:
@@ -67,6 +66,17 @@ class MouseThread:
             if not isinstance(data, sv.Detections):
                 target_x, target_y = self.predict_target_position(target_x, target_y, current_time)
             self.visualize_prediction(target_x, target_y, target_cls)
+
+        # Log which target is being aimed at
+        if target_cls is not None:
+            if target_cls == 0:
+                logger.info(f"[Mouse] Aiming at player {target_cls} at X: {target_x:.2f}, Y: {target_y:.2f}")
+        #     elif target_cls == 1:
+        #         logger.info(f"[Mouse] Aiming at body at X: {target_x:.2f}, Y: {target_y:.2f}")
+        #     else:
+        #         logger.info(f"[Mouse] Aiming at target class: {target_cls} at X: {target_x:.2f}, Y: {target_y:.2f}")
+        # else:
+        #     logger.info(f"[Mouse] Aiming at target (no class ID) at X: {target_x:.2f}, Y: {target_y:.2f}")
 
         move_x, move_y = self.calc_movement(target_x, target_y, target_cls)
         
@@ -161,7 +171,7 @@ class MouseThread:
         mouse_move_y = offset_y * degrees_per_pixel_y
 
         # Apply smoothing
-        alpha = self.smoothing_alpha
+        alpha = 0.85
         if not hasattr(self, 'last_move_x'):
             self.last_move_x, self.last_move_y = 0, 0
         
@@ -248,7 +258,6 @@ class MouseThread:
         self.screen_height = cfg.detection_window_height
         self.center_x = self.screen_width / 2
         self.center_y = self.screen_height / 2
-        self.smoothing_alpha = getattr(cfg, 'mouse_smoothing_alpha', 0.7)
 
     def visualize_target(self, target_x, target_y, target_cls):
         if (cfg.show_window and cfg.show_target_line) or (cfg.show_overlay and cfg.show_target_line):
