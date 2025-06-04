@@ -5,6 +5,7 @@ import cv2
 import win32gui, win32con
 import win32api
 import os
+import math
 
 from logic.config_watcher import cfg
 from logic.capture import capture
@@ -74,7 +75,16 @@ class Visuals(threading.Thread):
             # simple line
             if self.draw_line_data:
                 if cfg.show_window and cfg.show_target_line:
-                    cv2.line(self.image, (capture.screen_x_center, capture.screen_y_center), (int(self.draw_line_data[0]), int(self.draw_line_data[1])), (0, 255, 255), 2)
+                    start_x = capture.screen_x_center
+                    start_y = capture.screen_y_center
+                    end_x = int(self.draw_line_data[0])
+                    end_y = int(self.draw_line_data[1])
+                    
+                    # Calculate the length of the line
+                    line_length = math.sqrt(math.pow(end_x - start_x, 2) + math.pow(end_y - start_y, 2))
+                    logger.info(f"[Visuals] Target line length: {line_length:.2f} pixels")
+                    
+                    cv2.line(self.image, (start_x, start_y), (end_x, end_y), (0, 255, 255), 2)
                 
                 if cfg.show_overlay and cfg.overlay_show_target_line:
                     overlay.draw_line(capture.screen_x_center, capture.screen_y_center, int(self.draw_line_data[0]), int(self.draw_line_data[1]), 'green', 2)
@@ -175,7 +185,16 @@ class Visuals(threading.Thread):
             # prediction line
             if self.draw_predicted_position_data:
                 if cfg.show_window and cfg.show_target_prediction_line:
-                    cv2.line(self.image, (capture.screen_x_center, capture.screen_y_center), (int(self.draw_predicted_position_data[0]), int(self.draw_predicted_position_data[1])), (255, 0, 255), 2)
+                    start_x_pred = capture.screen_x_center
+                    start_y_pred = capture.screen_y_center
+                    end_x_pred = int(self.draw_predicted_position_data[0])
+                    end_y_pred = int(self.draw_predicted_position_data[1])
+                    
+                    # Calculate the length of the prediction line
+                    pred_line_length = math.sqrt(math.pow(end_x_pred - start_x_pred, 2) + math.pow(end_y_pred - start_y_pred, 2))
+                    logger.info(f"[Visuals] Prediction line length: {pred_line_length:.2f} pixels")
+                    
+                    cv2.line(self.image, (start_x_pred, start_y_pred), (end_x_pred, end_y_pred), (255, 0, 255), 2)
                 
                 if cfg.show_overlay and cfg.overlay_show_target_prediction_line:
                     overlay.draw_line(capture.screen_x_center, capture.screen_y_center, int(self.draw_predicted_position_data[0]), int(self.draw_predicted_position_data[1]), 'green', 2)  
@@ -224,10 +243,16 @@ class Visuals(threading.Thread):
                 logger.error(f'[Visuals] Error with on top window, skipping this option `debug_window_always_on_top`: {e}')
                 
     def draw_target_line(self, target_x, target_y, target_cls):
+        if target_x is None and target_y is None: # Signal to clear the line data
+            self.draw_line_data = None
+            return
         if target_cls not in self.disabled_line_classes:
             self.draw_line_data = (target_x, target_y)
 
     def draw_predicted_position(self, target_x, target_y, target_cls):
+        if target_x is None and target_y is None: # Signal to clear the line data
+            self.draw_predicted_position_data = None
+            return
         if target_cls not in self.disabled_line_classes:
             self.draw_predicted_position_data = (target_x, target_y)
         

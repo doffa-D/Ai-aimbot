@@ -11,6 +11,14 @@ from logic.logger import logger
 if cfg.arduino_move or cfg.arduino_shoot:
     from logic.arduino import arduino
 
+# Constants for stickiness logic
+STICKY_MAX_DIST_REACQUIRE = 50  # Max distance (pixels) to associate a new detection with a locked target
+STICKY_LOST_FRAMES_THRESHOLD = 5  # Frames to wait before unlocking if target not seen
+
+# Non-aimable class IDs (based on visual.py definitions)
+# 0:player, 1:bot, 2:weapon, 3:outline, 4:dead_body, 5:hideout_target_human, 6:hideout_target_balls, 7:head, 8:smoke, 9:fire, 10:third_person
+NON_AIMABLE_CLS = [1, 2, 3, 4, 5, 6, 8, 9, 10] # Excludes player (0) and head (7)
+
 class MouseThread:
     def __init__(self):
         self.initialize_parameters()
@@ -39,6 +47,10 @@ class MouseThread:
         self.arch = self.get_arch()
         self.section_size_x = self.screen_width / 100
         self.section_size_y = self.screen_height / 100
+        
+        # Attributes for target locking/stickiness
+        self.locked_target_details = None  # Stores dict: {'x', 'y', 'w', 'h', 'cls', 'dist_to_crosshair'}
+        self.frames_locked_target_unseen = 0
 
     def get_arch(self):
         if cfg.AI_enable_AMD:
@@ -47,40 +59,147 @@ class MouseThread:
             return 'cpu'
         return f'cuda:{cfg.AI_device}'
 
-
-
     def process_data(self, data):
+        all_current_detections = []
         if isinstance(data, sv.Detections):
-            target_x, target_y = data.xyxy.mean(axis=1)
-            target_w, target_h = data.xyxy[:, 2] - data.xyxy[:, 0], data.xyxy[:, 3] - data.xyxy[:, 1]
-            target_cls = data.class_id[0] if data.class_id.size > 0 else None
-        else:
-            target_x, target_y, target_w, target_h, target_cls = data
+            if hasattr(data, 'xyxy') and data.xyxy.size > 0:
+                for i in range(len(data.xyxy)):
+                    box = data.xyxy[i]
+                    cls_id = data.class_id[i] if hasattr(data, 'class_id') and data.class_id is not None and i < len(data.class_id) else None
+                    # confidence = data.confidence[i] if hasattr(data, 'confidence') and data.confidence is not None and i < len(data.confidence) else None # Optional
+
+                    # Filter out non-aimable classes early
+                    if cls_id in NON_AIMABLE_CLS:
+                        continue
+
+                    center_x = (box[0] + box[2]) / 2
+                    center_y = (box[1] + box[3]) / 2
+                    width = box[2] - box[0]
+                    height = box[3] - box[1]
+                    
+                    dist_to_crosshair = math.sqrt((center_x - self.center_x)**2 + (center_y - self.center_y)**2)
+                    
+                    all_current_detections.append({
+                        'x': center_x, 'y': center_y, 'w': width, 'h': height, 'cls': cls_id,
+                        'dist_to_crosshair': dist_to_crosshair
+                    })
+        elif isinstance(data, tuple) and len(data) == 5: # Handle the alternative raw format
+            raw_target_x, raw_target_y, raw_target_w, raw_target_h, raw_target_cls = data
+            dist_to_crosshair = math.sqrt((raw_target_x - self.center_x)**2 + (raw_target_y - self.center_y)**2)
+            
+            # Filter out non-aimable class for tuple data as well
+            if raw_target_cls not in NON_AIMABLE_CLS:
+                all_current_detections.append({
+                    'x': raw_target_x, 'y': raw_target_y, 'w': raw_target_w, 'h': raw_target_h, 'cls': raw_target_cls,
+                    'dist_to_crosshair': dist_to_crosshair
+                })
+
+        selected_target_for_frame = None
+
+        if not all_current_detections:
+            if self.locked_target_details:
+                self.frames_locked_target_unseen += 1
+                if self.frames_locked_target_unseen > cfg.mouse_sticky_lost_frames_threshold: # Use cfg
+                    logger.info(f"[Mouse] Locked target (Class {self.locked_target_details.get('cls')}) lost after {self.frames_locked_target_unseen} unseen frames.")
+                    self.locked_target_details = None
+            
+            if not self.locked_target_details: # Effectively, if no target is being tracked
+                if cfg.show_window or cfg.show_overlay:
+                    visuals.draw_target_line(None, None, None) # Signal to clear target line
+                    visuals.draw_predicted_position(None, None, None) # Signal to clear prediction line
+                return # No detections and no active lock, so do nothing
+        else: # Current detections are available
+            reacquired_match = None
+            if self.locked_target_details:
+                for det in all_current_detections:
+                    # Check distance to last known locked target position
+                    dist_to_locked_pos = math.sqrt((det['x'] - self.locked_target_details['x'])**2 + (det['y'] - self.locked_target_details['y'])**2)
+                    if dist_to_locked_pos < cfg.mouse_sticky_max_dist_reacquire: # Use cfg
+                        # Potential match. If multiple, prefer the one closer to crosshair (or stick to first good match)
+                        if reacquired_match is None or det['dist_to_crosshair'] < reacquired_match['dist_to_crosshair']:
+                            reacquired_match = det
+            
+            if reacquired_match:
+                selected_target_for_frame = reacquired_match
+                self.locked_target_details = selected_target_for_frame # Update lock with new position/details
+                self.frames_locked_target_unseen = 0
+                # logger.debug(f"[Mouse] Reacquired locked target: Class {selected_target_for_frame['cls']} at ({selected_target_for_frame['x']:.2f}, {selected_target_for_frame['y']:.2f})")
+            else:
+                # No reacquisition, or no previously locked target
+                if self.locked_target_details: # Was locked, but not found in current frame
+                    self.frames_locked_target_unseen += 1
+                    if self.frames_locked_target_unseen > cfg.mouse_sticky_lost_frames_threshold: # Use cfg
+                        logger.info(f"[Mouse] Locked target (Class {self.locked_target_details.get('cls')}) lost. Selecting new target from current detections.")
+                        self.locked_target_details = None # Force new target selection
+                    else:
+                        # Target temporarily unseen, don't select a new one yet to avoid jitter. Do nothing this frame.
+                        # logger.debug(f"[Mouse] Locked target temporarily unseen ({self.frames_locked_target_unseen} frames). Holding off selection.")
+                        if cfg.show_window or cfg.show_overlay:
+                            visuals.draw_target_line(None, None, None)
+                            visuals.draw_predicted_position(None, None, None)
+                        return
+
+                if not self.locked_target_details: # True if lock was lost or never existed
+                    all_current_detections.sort(key=lambda d: d['dist_to_crosshair'])
+                    if all_current_detections: # Should be true if we are in this outer else block
+                        selected_target_for_frame = all_current_detections[0]
+                        self.locked_target_details = selected_target_for_frame
+                        self.frames_locked_target_unseen = 0
+                        logger.info(f"[Mouse] New target locked: Class {selected_target_for_frame['cls']} at ({selected_target_for_frame['x']:.2f}, {selected_target_for_frame['y']:.2f})")
+
+        if not selected_target_for_frame:
+            # This case should ideally be covered by returns above if no target is to be processed
+            # logger.debug("[Mouse] No target selected for this frame after all logic.")
+            if cfg.show_window or cfg.show_overlay:
+                visuals.draw_target_line(None, None, None)
+                visuals.draw_predicted_position(None, None, None)
+            return
+
+        # --- Original processing logic starts here, using the selected_target_for_frame --- 
+        target_x = selected_target_for_frame['x']
+        target_y = selected_target_for_frame['y']
+        target_w = selected_target_for_frame['w']
+        target_h = selected_target_for_frame['h']
+        target_cls = selected_target_for_frame['cls']
+
+        # --- Aim Point Adjustment based on cfg.mouse_aim_part and target_cls ---
+        if cfg.mouse_aim_part == 'head_preferred':
+            if target_cls == 0: # Player/Body
+                target_y -= target_h * 0.25 # Aim for upper 25% of body bounding box
+            # If target_cls is 7 (head), it will aim at its center by default (no change needed here)
+        elif cfg.mouse_aim_part == 'body_upper_only':
+            if target_cls == 0: # Player/Body
+                target_y -= target_h * 0.25 # Aim for upper 25% of body bounding box
+            # If head, still aims at center of head bounding box.
+        # Else (cfg.mouse_aim_part == 'center'), no adjustment, aims at the center of the selected box.
 
         self.visualize_target(target_x, target_y, target_cls)
         self.bScope = self.check_target_in_scope(target_x, target_y, target_w, target_h, self.bScope_multiplier) if cfg.auto_shoot or cfg.triggerbot else False
         self.bScope = cfg.force_click or self.bScope
 
+        # Log which target is being aimed at (using the now stable selected target)
+        if target_cls is not None:
+            if target_cls == 0: # Assuming 0 is 'player' based on prior user edit
+                 logger.info(f"[Mouse] Aiming at player {target_cls} at X: {target_x:.2f}, Y: {target_y:.2f}")
+            # Add other specific class logging if needed, e.g., from self.cls_model_data in visuals.py
+            # elif target_cls == 7: # head
+            #     logger.info(f"[Mouse] Aiming at head ({target_cls}) at X: {target_x:.2f}, Y: {target_y:.2f}")
+            else:
+                 logger.info(f"[Mouse] Aiming at target class: {target_cls} at X: {target_x:.2f}, Y: {target_y:.2f}")
+        else:
+            logger.info(f"[Mouse] Aiming at target (no class ID) at X: {target_x:.2f}, Y: {target_y:.2f}")
+
         if not self.disable_prediction:
             current_time = time.time()
-            if not isinstance(data, sv.Detections):
-                target_x, target_y = self.predict_target_position(target_x, target_y, current_time)
-            self.visualize_prediction(target_x, target_y, target_cls)
-
-        # Log which target is being aimed at
-        if target_cls is not None:
-            if target_cls == 0:
-                logger.info(f"[Mouse] Aiming at player {target_cls} at X: {target_x:.2f}, Y: {target_y:.2f}")
-        #     elif target_cls == 1:
-        #         logger.info(f"[Mouse] Aiming at body at X: {target_x:.2f}, Y: {target_y:.2f}")
-        #     else:
-        #         logger.info(f"[Mouse] Aiming at target class: {target_cls} at X: {target_x:.2f}, Y: {target_y:.2f}")
-        # else:
-        #     logger.info(f"[Mouse] Aiming at target (no class ID) at X: {target_x:.2f}, Y: {target_y:.2f}")
-
-        move_x, move_y = self.calc_movement(target_x, target_y, target_cls)
+            # Prediction should use the selected target_x, target_y
+            predicted_target_x, predicted_target_y = self.predict_target_position(target_x, target_y, current_time)
+            self.visualize_prediction(predicted_target_x, predicted_target_y, target_cls)
+            # Use predicted coordinates for movement calculation if prediction is on
+            move_x, move_y = self.calc_movement(predicted_target_x, predicted_target_y, target_cls)
+        else:
+            move_x, move_y = self.calc_movement(target_x, target_y, target_cls)
         
-        self.visualize_history(target_x, target_y)
+        self.visualize_history(target_x, target_y) # History of raw selected target
         shooting.queue.put((self.bScope, self.get_shooting_key_state()))
         self.move_mouse(move_x, move_y)
 
@@ -258,6 +377,10 @@ class MouseThread:
         self.screen_height = cfg.detection_window_height
         self.center_x = self.screen_width / 2
         self.center_y = self.screen_height / 2
+
+        # Reset stickiness state on settings update too, in case screen dimensions change
+        self.locked_target_details = None
+        self.frames_locked_target_unseen = 0
 
     def visualize_target(self, target_x, target_y, target_cls):
         if (cfg.show_window and cfg.show_target_line) or (cfg.show_overlay and cfg.show_target_line):

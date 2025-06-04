@@ -63,14 +63,19 @@ class Config():
         
         # Mouse
         self.config_Mouse = self.config["Mouse"]
-        self.mouse_dpi = int(self.config_Mouse["mouse_dpi"])
-        self.mouse_sensitivity = float(self.config_Mouse["mouse_sensitivity"])
-        self.mouse_fov_width = int(self.config_Mouse["mouse_fov_width"])
-        self.mouse_fov_height = int(self.config_Mouse["mouse_fov_height"])
-        self.mouse_min_speed_multiplier = float(self.config_Mouse["mouse_min_speed_multiplier"])
-        self.mouse_max_speed_multiplier = float(self.config_Mouse["mouse_max_speed_multiplier"])
-        self.mouse_lock_target = self.config_Mouse.getboolean("mouse_lock_target")
-        self.mouse_auto_aim = self.config_Mouse.getboolean("mouse_auto_aim")
+        self.mouse_dpi = self.config.getfloat('Mouse', 'mouse_dpi', fallback=800)
+        self.mouse_sensitivity = self.config.getfloat('Mouse', 'mouse_sensitivity', fallback=0.03)
+        self.mouse_fov_width = self.config.getfloat('Mouse', 'mouse_fov_width', fallback=90)
+        self.mouse_fov_height = self.config.getfloat('Mouse', 'mouse_fov_height', fallback=90)
+        self.mouse_min_speed_multiplier = self.config.getfloat('Mouse', 'mouse_min_speed_multiplier', fallback=0.8)
+        self.mouse_max_speed_multiplier = self.config.getfloat('Mouse', 'mouse_max_speed_multiplier', fallback=1.2)
+        self.mouse_lock_target = self.config.getboolean('Mouse', 'mouse_lock_target', fallback=False)
+        self.mouse_auto_aim = self.config.getboolean('Mouse', 'mouse_auto_aim', fallback=False)
+        
+        # New Aimbot Behavior Settings
+        self.mouse_aim_part = self.config.get('Mouse', 'mouse_aim_part', fallback='center').lower()
+        self.mouse_sticky_max_dist_reacquire = self.config.getint('Mouse', 'mouse_sticky_max_dist_reacquire', fallback=50)
+        self.mouse_sticky_lost_frames_threshold = self.config.getint('Mouse', 'mouse_sticky_lost_frames_threshold', fallback=5)
         
         # Shooting
         self.config_Shooting = self.config["Shooting"]
@@ -95,6 +100,7 @@ class Config():
         self.AI_device = str(self.config_AI["AI_device"])
         self.AI_enable_AMD = self.config_AI.getboolean("AI_enable_AMD")
         self.disable_tracker = self.config_AI.getboolean("disable_tracker")
+        self.AI_mouse_net_points = self.config.getint('AI', 'AI_mouse_net_points', fallback=20)
         
         # Overlay
         self.config_overlay = self.config["overlay"]
